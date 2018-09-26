@@ -1,0 +1,208 @@
+Anatomy of an Ansible Module
+26 Sep 2018
+Solutions Engineering
+Tags: ansible, redhat
+
+Sergi Jimenez
+Software Engineer, Red Hat
+sjr@redhat.com
+@tripledes
+
+
+* About me
+
+.image images/me_even_smaller.jpg 180 140
+
+- Worked in traditional sysadmin envs. since 2002 to 2012
+- Done some 4 years of "DevOps" time in Germany
+- Platform Consultant @ Red Hat 2016
+- Cloud TAM - OpenShift @ Red Hat 2017
+- Software Engineer @ Red Hat 2018
+
+
+* Agenda
+
+- What's an Ansible module
+- How modules are written
+- Conclusions
+- Q&A
+
+
+* Ansible and Ansible Modules
+
+- Ansible, declarative automation (and more) tool.
+- Uses modules to add support for different types resources, e.g. k8s module interacts with K8s API.
+- Modules are the code that really does what a user defines in a playbook
+- Python + some libraries
+
+: By now I guess everybody knows Ansible right? :)
+: Ansible imports the Python code so it's able to executed what's declare on the playbooks
+: Modules can use any Python library out there, interaction with RESTful APIs, services, files, ... you name it.
+
+
+* When to write modules
+
+*DISCLAIMER*: I don't like _command_, _shell_, ...
+*DISCLAIMER#2*: I had a fairly strong Puppet background.
+
+- Does you playbook abuse of _command_ (_shell_, ...)?
+- Do you need idempotency and find it hard to manage with commands?
+- Do you plan to share your _code_ ?
+- Think about this..."manage Satellite 6 resources just using a command and hammer"
+
+.image images/fry-sure.png
+
+: There seem to be an assumption that a playbook with commands is better than a shell script, but it's not.
+: Ansible does a fair job trying to control the execution of your commands, but it's the playbook author's responsability.
+: Ansible offers you ways (registering outputs, checking for files being created after the first execution, ...) to make sure you cmd doesn't do anything wrong.
+: I asked this myself, if we weren't awesome writing shell scripts, how is a oneliner on a playbook gonna make things better? :)
+: Allow that question to sink in, Sat6, could be done? Mostly yeah...is it nice? is it good? To me, it's a leap of faith :)
+
+
+* Simple Ansible Module - example #1
+
+.code -numbers examples/nay.py /START NAYCODE OMIT/,/END NAYCODE OMIT/
+
+: This is the fun part
+: The only magic here is what AnsibleModule provides for us
+: arguments parsing, exit control, data serialization, ...
+: Arguments could be type complex, dict, could have choices (yes, no), have a default value...quite flexible
+
+
+* Simple Ansible Module - example #2
+
+.code -numbers examples/nay.py /START NAYHEADER OMIT/,/END NAYHEADER OMIT/
+
+: That's a fairly common header in any Ansible file, it can also include the license text.
+
+
+* Simple Ansible Module - example #3
+
+.code -numbers examples/nay.py /START NAYBLOCKS OMIT/,/END NAYBLOCKS OMIT/
+
+: Blocks is what you get on Ansible's doc website
+: Also rendered by ansible-doc
+: If module is complex enought, it's worth it include more examples
+: Blocks can be defined empty, using a hash (or pound) symbol in-between the 3 single quotes, not a good practice
+
+
+* Simple Ansible Module - unit tests #1
+
+.code -numbers examples/test_nay.py /START TESTCODE OMIT/,/END TESTCODE OMIT/
+
+: Basically testing the results of the execution, should be enough for simple modules
+: More complex ones, might need some critical methods to be tested individually, author's discretion
+: I use pytest, unittest also fine
+
+
+* Simple Ansible Module - unit tests #2
+
+.code -numbers examples/test_nay.py /START TESTMOCKS OMIT/,/END TESTMOCKS OMIT/
+
+: If we'd use fail_json, we'd need to mock it here as well
+: Module parameters are set the hardway ... elaborate
+
+* Let's get more serious...
+
+- Let's have a look to some Kubernetes modules.
+- Set of modules to perform different operations on Kubernetes.
+- Shared code and documentation.
+
+: Main module does the heavy lifting, allowing the users to manage any object in Kubernets
+: Includes specialized module to scale resources and another for facts gathering
+: Ansible provides niceties for code and docs sharing, we'll see that in a second
+
+
+* Sharing code or Module utils #1
+
+- One of the Ansible niceties.
+- Allows to share code amongst modules.
+
+References:
+
+- [[https://github.com/ansible/ansible/blob/devel/lib/ansible/modules/clustering/k8s/k8s.py#L163][k8s.py#163]]
+- [[https://github.com/ansible/ansible/blob/devel/lib/ansible/module_utils/k8s/raw.py][module_utils/k8s/raw.py]]
+
+: Think of it like writing a library for a regular application
+: Usually targeting a single family of modules (e.g. oVirt, K8s...) but not always
+
+* Sharing code or Module utils - unit tests #2
+
+- There's no difference, just import paths change.
+- There may be way more mocking. (huge chance!)
+- At the end of the day, you're testing Python code.
+
+: As any other Python app, just get the imports right, and pytest will do the rest.
+
+
+* Sharing documentation (or doc fragments) #1
+
+- As for code, write it once, share it as many times as needed.
+- Looked up for and built by Ansible (_ansible-doc_).
+
+    class ModuleDocFragment(object):
+        DOCUMENTATION = '''
+    options:
+      state:
+        description:
+        - Determines if an object should be created, patched, or deleted. When set to C(present), an
+          object will be created, if it does not already exist. If set to C(absent), an existing
+          object will be deleted. If set to C(present), an existing object will be patched, if its
+          attributes differ from those specified using I(resource_definition) or I(src).
+        default: present
+        choices:
+        - present
+        - absent
+      force:
+        description:
+        - If set to C(True), and I(state) is C(present), an existing object will be replaced.
+        default: false
+        type: bool
+    '''
+
+: Some gotchas.
+
+* Sharing documentation (or doc fragments) #2
+
+- Using it within the _DOCUMENTATION_ block
+
+    ...
+    extends_documentation_fragment:
+      - k8s_state_options
+      - ...
+
+    options:
+      ...
+
+: Each fragment to be used in a given module needs to be listed as array item
+: Following the fragments, we find the module's specific arguments
+: Run ansible-doc k8s
+
+* Sharing documentation - Gotchas
+
+- Developing out-of-tree modules, _ansible-doc_ cannot look up the fragments.
+- [[https://github.com/ansible/ansible/issues/42938][ansible-doc cannot find documentation fragments when those live outside of ANSIBLE_HOME - GH issue]]
+- Issue supposed to be accepted.
+- _ansible(-playbook)_ both can find code within _module_utils_, _ansible-doc_ should.
+- Workaround, link your fragments to the correct path within ANSIBLE_HOME during development.
+
+.image images/catch.gif 210 230
+
+: if plan is send PR, better to start developing on top of Ansible's tree
+: issue 3 months old, seems implementation is on its way
+: ansible(-playbook) both have a parameter and a configuration setting to define module_utils path
+
+
+* Conclusions
+
+- Don't be afraid of the snake!
+- Test your code (ANY code :)), mainly focusing on the execution workflow rather than single methods.
+- Reuse as much as possible from _module_utils_.
+- Remember about the doc fragments and _ansible-doc_ issue.
+
+: it's just python, can be reused and offers better control mechanisims than just plain playbooks
+: module_utils is not only where to store your shared code, but also common code for all Ansible modules.
+
+* Questions?
+
+.image images/questions.jpg 300 500
